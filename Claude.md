@@ -56,10 +56,10 @@ the payment window; confirmation is the point at which uniqueness is committed.
 
 ## Scope
 
-In scope now: the core booking backbone — movies, theaters + seats (one implicit
-screen per theater), shows, seat availability, holds, booking, mocked payment,
-confirmation — with MongoDB persistence, REST APIs, DTOs, validation, error handling,
-and tests (including a concurrency test).
+In scope now: the core booking backbone — movies, theaters with screens and per-screen
+seats, shows, seat availability, holds, booking, mocked payment, confirmation — with
+MongoDB persistence, REST APIs, DTOs, validation, error handling, and tests (including a
+concurrency test).
 
 Deferred until the core is solid: pricing tiers, discount codes, refund policies,
 notifications, and admin/customer RBAC.
@@ -82,3 +82,9 @@ notification integrations (all external effects are mocked).
 - **M1 — Scaffold on Spring Boot + MongoDB.** Project skeleton, Mongo connection,
   actuator health, and a `/ping` liveness endpoint. Runs against a locally running
   MongoDB.
+- **M2 — Domain model + repositories + indexes.** Documents (Movie, Theater embedding
+  Screens which embed Seats, Show pointing at a movie/theater/screen, Booking,
+  BookedSeat, User) and Spring Data repositories. The unique compound index
+  `(showId, seatId)` on `booked_seats` lands here, with an integration test proving it
+  rejects a duplicate seat on the same show while allowing the same seat number on
+  different shows.
