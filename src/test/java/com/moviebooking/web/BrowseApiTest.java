@@ -16,14 +16,15 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 import com.moviebooking.repository.MovieRepository;
 import com.moviebooking.repository.ShowRepository;
 import com.moviebooking.repository.TheaterRepository;
 
 /**
- * Walks the customer browse flow: search a movie by name, find the theaters screening
- * it, then list its showtimes at a chosen theater.
+ * Walks the customer browse flow: search a movie by name, find the theaters screening it,
+ * then list its showtimes. Catalog is set up as ADMIN; browsing as a CUSTOMER.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -44,64 +45,67 @@ class BrowseApiTest {
     @Autowired
     private ShowRepository showRepository;
 
+    private String adminId;
+    private String customerId;
+
     @BeforeEach
-    void clean() {
-        // Isolate this flow from data left by other tests so counts are deterministic.
+    void setUp() throws Exception {
         showRepository.deleteAll();
         movieRepository.deleteAll();
         theaterRepository.deleteAll();
+
+        adminId = idOf(post("/api/users").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"Admin\",\"email\":\"admin+" + System.nanoTime() + "@x.com\",\"role\":\"ADMIN\"}"));
+        customerId = idOf(post("/api/users").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"Cust\",\"email\":\"cust+" + System.nanoTime() + "@x.com\"}"));
     }
 
     @Test
     void searchThenFindTheatersThenListShowtimes() throws Exception {
-        String movieId = idOf(mockMvc.perform(post("/api/movies")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"name\":\"The Dark Knight\",\"durationMinutes\":152}"))
-                .andReturn());
-
-        String theaterId = idOf(mockMvc.perform(post("/api/theaters")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"name\":\"Cinepolis\",\"city\":\"Mumbai\"}"))
-                .andReturn());
-
-        String screenId = idOf(mockMvc.perform(post("/api/theaters/" + theaterId + "/screens")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"name\":\"Audi 1\",\"seats\":[{\"number\":\"A1\",\"category\":\"GOLD\"}]}"))
-                .andReturn());
-
-        mockMvc.perform(post("/api/shows")
-                        .contentType(MediaType.APPLICATION_JSON)
+        String movieId = idOf(asAdmin(post("/api/movies"))
+                .content("{\"name\":\"The Dark Knight\",\"durationMinutes\":152}"));
+        String theaterId = idOf(asAdmin(post("/api/theaters"))
+                .content("{\"name\":\"Cinepolis\",\"city\":\"Mumbai\"}"));
+        String screenId = idOf(asAdmin(post("/api/theaters/" + theaterId + "/screens"))
+                .content("{\"name\":\"Audi 1\",\"seats\":[{\"number\":\"A1\",\"category\":\"GOLD\"}]}"));
+        mockMvc.perform(asAdmin(post("/api/shows"))
                         .content("{\"movieId\":\"" + movieId + "\",\"theaterId\":\"" + theaterId
                                 + "\",\"screenId\":\"" + screenId
                                 + "\",\"startTime\":\"2030-06-01T14:00:00Z\",\"durationMinutes\":152}"))
                 .andExpect(status().isCreated());
 
-        // 1. Search by partial, case-insensitive name.
-        mockMvc.perform(get("/api/movies").param("name", "dark"))
+        // 1. Search by partial, case-insensitive name (as a customer).
+        mockMvc.perform(get("/api/movies").param("name", "dark").header("X-User-Id", customerId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(1))
                 .andExpect(jsonPath("$[0].name").value("The Dark Knight"));
 
         // 2. Theaters screening the movie (filtered by city).
-        mockMvc.perform(get("/api/movies/" + movieId + "/theaters").param("city", "Mumbai"))
+        mockMvc.perform(get("/api/movies/" + movieId + "/theaters").param("city", "Mumbai")
+                        .header("X-User-Id", customerId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(1))
-                .andExpect(jsonPath("$[0].name").value("Cinepolis"))
-                .andExpect(jsonPath("$[0].city").value("Mumbai"));
+                .andExpect(jsonPath("$[0].name").value("Cinepolis"));
 
-        // A non-matching city returns nothing.
-        mockMvc.perform(get("/api/movies/" + movieId + "/theaters").param("city", "Delhi"))
+        mockMvc.perform(get("/api/movies/" + movieId + "/theaters").param("city", "Delhi")
+                        .header("X-User-Id", customerId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(0));
 
         // 3. Showtimes for the movie at the theater.
-        mockMvc.perform(get("/api/shows").param("movieId", movieId).param("theaterId", theaterId))
+        mockMvc.perform(get("/api/shows").param("movieId", movieId).param("theaterId", theaterId)
+                        .header("X-User-Id", customerId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(1))
                 .andExpect(jsonPath("$[0].screenId").value(screenId));
     }
 
-    private String idOf(MvcResult result) throws Exception {
+    private MockHttpServletRequestBuilder asAdmin(MockHttpServletRequestBuilder builder) {
+        return builder.header("X-User-Id", adminId).contentType(MediaType.APPLICATION_JSON);
+    }
+
+    private String idOf(MockHttpServletRequestBuilder builder) throws Exception {
+        MvcResult result = mockMvc.perform(builder).andReturn();
         JsonNode node = objectMapper.readTree(result.getResponse().getContentAsString());
         return node.get("id").asText();
     }

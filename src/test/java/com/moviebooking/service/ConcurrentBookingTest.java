@@ -19,6 +19,7 @@ import org.springframework.dao.DuplicateKeyException;
 import com.moviebooking.domain.BookedSeat;
 import com.moviebooking.domain.Booking;
 import com.moviebooking.domain.BookingStatus;
+import com.moviebooking.domain.Role;
 import com.moviebooking.domain.Screen;
 import com.moviebooking.domain.SeatCategory;
 import com.moviebooking.domain.Show;
@@ -162,7 +163,7 @@ class ConcurrentBookingTest {
         List<String> ids = new ArrayList<>();
         for (int i = 0; i < count; i++) {
             String email = "racer-" + i + "-" + System.nanoTime() + "@x.com";
-            ids.add(userService.create(new CreateUserRequest("Racer " + i, email)).getId());
+            ids.add(userService.create(new CreateUserRequest("Racer " + i, email, Role.CUSTOMER)).getId());
         }
         return ids;
     }

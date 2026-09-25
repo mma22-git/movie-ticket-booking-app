@@ -2,6 +2,7 @@ package com.moviebooking.service;
 
 import org.springframework.stereotype.Service;
 
+import com.moviebooking.domain.Role;
 import com.moviebooking.domain.User;
 import com.moviebooking.exception.ConflictException;
 import com.moviebooking.exception.ResourceNotFoundException;
@@ -23,6 +24,7 @@ public class UserService {
         User user = User.builder()
                 .name(request.name())
                 .email(request.email())
+                .role(request.role() != null ? request.role() : Role.CUSTOMER)
                 .build();
         return userRepository.save(user);
     }

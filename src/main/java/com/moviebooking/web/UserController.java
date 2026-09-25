@@ -9,6 +9,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.moviebooking.domain.Role;
+import com.moviebooking.security.RequiresRole;
 import com.moviebooking.service.UserService;
 import com.moviebooking.web.dto.CreateUserRequest;
 import com.moviebooking.web.dto.UserResponse;
@@ -23,6 +25,7 @@ public class UserController {
 
     private final UserService userService;
 
+    /** Public bootstrap endpoint: creates a user with the requested role (default CUSTOMER). */
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public UserResponse create(@Valid @RequestBody CreateUserRequest request) {
@@ -30,6 +33,7 @@ public class UserController {
     }
 
     @GetMapping("/{id}")
+    @RequiresRole({Role.ADMIN, Role.CUSTOMER})
     public UserResponse get(@PathVariable String id) {
         return UserResponse.from(userService.get(id));
     }

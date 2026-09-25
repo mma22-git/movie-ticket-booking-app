@@ -133,3 +133,17 @@ notification integrations (all external effects are mocked).
   directly for the same `(showId, seatId)` — asserts exactly one insert wins and N-1 hit
   `DuplicateKeyException`, proving the unique index is the last line of defense on its
   own. Run repeatedly to confirm it is deterministic, not flaky. Full suite: 24 tests.
+- **M7 — RBAC (admin + customer).** Basic role-based access control without heavyweight
+  auth (advanced auth is out of scope). A `Role` (ADMIN/CUSTOMER) on `User`; the caller
+  is identified by an `X-User-Id` header (the principal a real auth layer/gateway would
+  supply — authentication itself is assumed done upstream). A `RoleAuthorizationInterceptor`
+  resolves that user and enforces a `@RequiresRole` annotation per handler: admins manage
+  the catalog, customers browse and book; `/ping`, actuator, and user creation are public
+  for bootstrap. Booking and payment now take the acting user from the principal, not the
+  request body, so a caller can't book as someone else. Unauthorized → 401, wrong role →
+  403. Verified with a dedicated RBAC test plus header-aware updates to the existing web
+  tests. Full suite: 29 tests.
+- **M8 — README + assumptions.** Rewrote the README as a complete reference: overview,
+  stack rationale, the concurrency model, the roles/`X-User-Id` access model, run/config
+  instructions, the full API surface grouped by admin/customer with an end-to-end curl
+  example, the documented assumptions list, testing, and project structure.

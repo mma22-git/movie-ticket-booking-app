@@ -117,6 +117,15 @@ public class BookingService {
                 .orElseThrow(() -> ResourceNotFoundException.of("Booking", bookingId));
     }
 
+    /** Fetches a booking, ensuring it belongs to the requesting user. */
+    public Booking getOwned(String bookingId, String userId) {
+        Booking booking = get(bookingId);
+        if (!booking.getUserId().equals(userId)) {
+            throw new ForbiddenException("Booking belongs to another user");
+        }
+        return booking;
+    }
+
     public List<Booking> findByUser(String userId) {
         return bookingRepository.findByUserId(userId);
     }

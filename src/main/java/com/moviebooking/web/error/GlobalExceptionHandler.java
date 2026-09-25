@@ -17,6 +17,7 @@ import com.moviebooking.exception.ConflictException;
 import com.moviebooking.exception.ForbiddenException;
 import com.moviebooking.exception.PaymentFailedException;
 import com.moviebooking.exception.ResourceNotFoundException;
+import com.moviebooking.exception.UnauthorizedException;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
@@ -38,6 +39,11 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ConflictException.class)
     public ResponseEntity<ApiError> handleConflict(ConflictException ex) {
         return build(HttpStatus.CONFLICT, ex.getMessage(), null);
+    }
+
+    @ExceptionHandler(UnauthorizedException.class)
+    public ResponseEntity<ApiError> handleUnauthorized(UnauthorizedException ex) {
+        return build(HttpStatus.UNAUTHORIZED, ex.getMessage(), null);
     }
 
     @ExceptionHandler(ForbiddenException.class)

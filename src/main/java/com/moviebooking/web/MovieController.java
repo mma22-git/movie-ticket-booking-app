@@ -12,6 +12,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.moviebooking.domain.Role;
+import com.moviebooking.security.RequiresRole;
 import com.moviebooking.service.MovieService;
 import com.moviebooking.service.ShowService;
 import com.moviebooking.web.dto.CreateMovieRequest;
@@ -31,23 +33,27 @@ public class MovieController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
+    @RequiresRole(Role.ADMIN)
     public MovieResponse create(@Valid @RequestBody CreateMovieRequest request) {
         return MovieResponse.from(movieService.create(request));
     }
 
     @GetMapping("/{id}")
+    @RequiresRole({Role.ADMIN, Role.CUSTOMER})
     public MovieResponse get(@PathVariable String id) {
         return MovieResponse.from(movieService.get(id));
     }
 
     /** Lists movies, optionally filtered by a case-insensitive partial name search. */
     @GetMapping
+    @RequiresRole({Role.ADMIN, Role.CUSTOMER})
     public List<MovieResponse> search(@RequestParam(required = false) String name) {
         return movieService.search(name).stream().map(MovieResponse::from).toList();
     }
 
     /** Theaters currently screening this movie, optionally filtered by city. */
     @GetMapping("/{id}/theaters")
+    @RequiresRole({Role.ADMIN, Role.CUSTOMER})
     public List<TheaterSummaryResponse> theatersScreening(@PathVariable String id,
             @RequestParam(required = false) String city) {
         return showService.getTheatersScreeningMovie(id, city).stream()

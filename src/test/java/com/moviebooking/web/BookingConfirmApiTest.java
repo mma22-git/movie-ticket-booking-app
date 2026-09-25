@@ -22,8 +22,8 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 import com.moviebooking.repository.BookedSeatRepository;
 
 /**
- * Verifies step two: paying for a held booking confirms it, persists one booked-seat row
- * per seat, and frees the hold — plus the ownership, status, and payment guards.
+ * Verifies step two: a customer paying for their held booking confirms it, persists one
+ * booked-seat row per seat, and frees the hold — plus the status and ownership guards.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -39,71 +39,83 @@ class BookingConfirmApiTest {
     private BookedSeatRepository bookedSeatRepository;
 
     private String showId;
-    private String userId;
+    private String customerId;
+    private String adminId;
 
     @BeforeEach
     void setUp() throws Exception {
-        String movieId = idOf(jsonPost("/api/movies", "{\"name\":\"Tenet\",\"durationMinutes\":150}"));
-        String theaterId = idOf(jsonPost("/api/theaters", "{\"name\":\"PVR\",\"city\":\"Pune\"}"));
-        String screenId = idOf(jsonPost("/api/theaters/" + theaterId + "/screens",
-                "{\"name\":\"Audi 1\",\"seats\":[{\"number\":\"A1\",\"category\":\"GOLD\"},"
+        adminId = idOf(user("Admin", "ADMIN"));
+        customerId = idOf(user("Ann", "CUSTOMER"));
+
+        String movieId = idOf(asAdmin(post("/api/movies")).content("{\"name\":\"Tenet\",\"durationMinutes\":150}"));
+        String theaterId = idOf(asAdmin(post("/api/theaters")).content("{\"name\":\"PVR\",\"city\":\"Pune\"}"));
+        String screenId = idOf(asAdmin(post("/api/theaters/" + theaterId + "/screens"))
+                .content("{\"name\":\"Audi 1\",\"seats\":[{\"number\":\"A1\",\"category\":\"GOLD\"},"
                         + "{\"number\":\"A2\",\"category\":\"GOLD\"}]}"));
-        showId = idOf(jsonPost("/api/shows", "{\"movieId\":\"" + movieId + "\",\"theaterId\":\"" + theaterId
-                + "\",\"screenId\":\"" + screenId
+        showId = idOf(asAdmin(post("/api/shows")).content("{\"movieId\":\"" + movieId + "\",\"theaterId\":\""
+                + theaterId + "\",\"screenId\":\"" + screenId
                 + "\",\"startTime\":\"2030-08-01T10:00:00Z\",\"durationMinutes\":150}"));
-        userId = idOf(jsonPost("/api/users", "{\"name\":\"Ann\",\"email\":\"ann+" + System.nanoTime() + "@x.com\"}"));
     }
 
     @Test
     void payConfirmsBookingPersistsSeatsAndFreesHold() throws Exception {
-        String bookingId = idOf(jsonPost("/api/bookings",
-                "{\"showId\":\"" + showId + "\",\"userId\":\"" + userId + "\",\"seatIds\":[\"A1\",\"A2\"]}"));
+        String bookingId = idOf(asCustomer(post("/api/bookings"), customerId)
+                .content("{\"showId\":\"" + showId + "\",\"seatIds\":[\"A1\",\"A2\"]}"));
 
-        mockMvc.perform(jsonPost("/api/bookings/" + bookingId + "/payment",
-                        "{\"userId\":\"" + userId + "\",\"paymentMethod\":\"MOCK\"}"))
+        mockMvc.perform(asCustomer(post("/api/bookings/" + bookingId + "/payment"), customerId)
+                        .content("{\"paymentMethod\":\"MOCK\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("CONFIRMED"));
 
-        // One booked-seat row per seat is now persisted.
         assertThat(bookedSeatRepository.findByShowId(showId)).hasSize(2);
 
-        // Seats stay unavailable after confirmation (now via the persisted rows, not the hold).
-        mockMvc.perform(get("/api/shows/" + showId + "/available-seats"))
+        mockMvc.perform(asCustomer(get("/api/shows/" + showId + "/available-seats"), customerId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(0));
     }
 
     @Test
     void confirmingTwiceIsRejected() throws Exception {
-        String bookingId = idOf(jsonPost("/api/bookings",
-                "{\"showId\":\"" + showId + "\",\"userId\":\"" + userId + "\",\"seatIds\":[\"A1\"]}"));
+        String bookingId = idOf(asCustomer(post("/api/bookings"), customerId)
+                .content("{\"showId\":\"" + showId + "\",\"seatIds\":[\"A1\"]}"));
 
-        mockMvc.perform(jsonPost("/api/bookings/" + bookingId + "/payment", "{\"userId\":\"" + userId + "\"}"))
+        mockMvc.perform(asCustomer(post("/api/bookings/" + bookingId + "/payment"), customerId)
+                        .content("{}"))
                 .andExpect(status().isOk());
 
-        // Already CONFIRMED -> not awaiting confirmation.
-        mockMvc.perform(jsonPost("/api/bookings/" + bookingId + "/payment", "{\"userId\":\"" + userId + "\"}"))
+        mockMvc.perform(asCustomer(post("/api/bookings/" + bookingId + "/payment"), customerId)
+                        .content("{}"))
                 .andExpect(status().isConflict());
     }
 
     @Test
     void payingForAnotherUsersBookingIsForbidden() throws Exception {
-        String bookingId = idOf(jsonPost("/api/bookings",
-                "{\"showId\":\"" + showId + "\",\"userId\":\"" + userId + "\",\"seatIds\":[\"A1\"]}"));
-        String otherUser = idOf(jsonPost("/api/users",
-                "{\"name\":\"Bob\",\"email\":\"bob+" + System.nanoTime() + "@x.com\"}"));
+        String bookingId = idOf(asCustomer(post("/api/bookings"), customerId)
+                .content("{\"showId\":\"" + showId + "\",\"seatIds\":[\"A1\"]}"));
+        String otherCustomer = idOf(user("Bob", "CUSTOMER"));
 
-        mockMvc.perform(jsonPost("/api/bookings/" + bookingId + "/payment", "{\"userId\":\"" + otherUser + "\"}"))
+        mockMvc.perform(asCustomer(post("/api/bookings/" + bookingId + "/payment"), otherCustomer)
+                        .content("{}"))
                 .andExpect(status().isForbidden());
+    }
+
+    private MockHttpServletRequestBuilder user(String name, String role) {
+        return post("/api/users").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"" + name + "\",\"email\":\"" + name.toLowerCase() + "+"
+                        + System.nanoTime() + "@x.com\",\"role\":\"" + role + "\"}");
+    }
+
+    private MockHttpServletRequestBuilder asAdmin(MockHttpServletRequestBuilder builder) {
+        return builder.header("X-User-Id", adminId).contentType(MediaType.APPLICATION_JSON);
+    }
+
+    private MockHttpServletRequestBuilder asCustomer(MockHttpServletRequestBuilder builder, String customer) {
+        return builder.header("X-User-Id", customer).contentType(MediaType.APPLICATION_JSON);
     }
 
     private String idOf(MockHttpServletRequestBuilder builder) throws Exception {
         MvcResult result = mockMvc.perform(builder).andReturn();
         JsonNode node = objectMapper.readTree(result.getResponse().getContentAsString());
         return node.get("id").asText();
-    }
-
-    private MockHttpServletRequestBuilder jsonPost(String url, String body) {
-        return post(url).contentType(MediaType.APPLICATION_JSON).content(body);
     }
 }
