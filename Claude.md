@@ -126,3 +126,10 @@ notification integrations (all external effects are mocked).
   booking can be confirmed (409), a lapsed hold blocks confirmation (409), declined
   payment (402). `POST /api/bookings/{id}/payment`. Verified end to end (hold → pay →
   CONFIRMED, one booked-seat row per seat, seats stay unavailable) plus the guard cases.
+- **M6 — Concurrency tests (the money test).** `ConcurrentBookingTest` releases N=20
+  threads simultaneously (a ready/start/done latch harness): (1) all racing the full
+  hold → pay flow for one seat — asserts exactly one CONFIRMED booking, N-1 clean
+  failures, and exactly one persisted booked-seat row; (2) racing the persistence layer
+  directly for the same `(showId, seatId)` — asserts exactly one insert wins and N-1 hit
+  `DuplicateKeyException`, proving the unique index is the last line of defense on its
+  own. Run repeatedly to confirm it is deterministic, not flaky. Full suite: 24 tests.
