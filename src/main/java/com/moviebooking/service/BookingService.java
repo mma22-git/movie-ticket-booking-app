@@ -5,12 +5,16 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 
+import com.moviebooking.domain.BookedSeat;
 import com.moviebooking.domain.Booking;
 import com.moviebooking.domain.BookingStatus;
 import com.moviebooking.domain.Seat;
 import com.moviebooking.domain.Show;
+import com.moviebooking.exception.ConflictException;
+import com.moviebooking.exception.ForbiddenException;
 import com.moviebooking.exception.ResourceNotFoundException;
 import com.moviebooking.exception.SeatUnavailableException;
 import com.moviebooking.repository.BookedSeatRepository;
@@ -65,6 +69,49 @@ public class BookingService {
         }
     }
 
+    /**
+     * Step two of booking: commit a held booking once payment has succeeded.
+     *
+     * <p>Order matters. We write one {@link BookedSeat} per seat <em>first</em>: the
+     * unique {@code (showId, seatId)} index is the durable guarantee, so a duplicate-key
+     * error here means the seat was taken and the whole confirmation aborts (any rows we
+     * did insert are removed, since standalone Mongo gives no multi-document
+     * transaction). Only after all seat rows are in do we flip the booking to CONFIRMED,
+     * compensating the same way if that write fails. Finally the in-memory holds are
+     * released — the seats are now durably ours.
+     */
+    public Booking confirm(String bookingId, String userId) {
+        Booking booking = get(bookingId);
+        if (!booking.getUserId().equals(userId)) {
+            throw new ForbiddenException("Booking belongs to another user");
+        }
+        if (booking.getStatus() != BookingStatus.CREATED) {
+            throw new ConflictException("Booking is not awaiting confirmation: " + booking.getStatus());
+        }
+
+        String showId = booking.getShowId();
+        List<String> seatIds = booking.getSeatIds();
+        for (String seatId : seatIds) {
+            if (!seatLockProvider.isHeldBy(showId, seatId, userId)) {
+                throw new SeatUnavailableException("Hold has expired for seat: " + seatId);
+            }
+        }
+
+        persistBookedSeats(booking);
+
+        booking.setStatus(BookingStatus.CONFIRMED);
+        Booking confirmed;
+        try {
+            confirmed = bookingRepository.save(booking);
+        } catch (RuntimeException e) {
+            bookedSeatRepository.deleteByBookingId(bookingId); // undo the seat rows
+            throw e;
+        }
+
+        seatLockProvider.release(showId, seatIds, userId);
+        return confirmed;
+    }
+
     public Booking get(String bookingId) {
         return bookingRepository.findById(bookingId)
                 .orElseThrow(() -> ResourceNotFoundException.of("Booking", bookingId));
@@ -82,6 +129,26 @@ public class BookingService {
             if (!screenSeatNumbers.contains(seatId)) {
                 throw ResourceNotFoundException.of("Seat", seatId);
             }
+        }
+    }
+
+    private void persistBookedSeats(Booking booking) {
+        Instant now = Instant.now();
+        List<BookedSeat> rows = booking.getSeatIds().stream()
+                .map(seatId -> BookedSeat.builder()
+                        .showId(booking.getShowId())
+                        .seatId(seatId)
+                        .bookingId(booking.getId())
+                        .userId(booking.getUserId())
+                        .createdAt(now)
+                        .build())
+                .toList();
+        try {
+            bookedSeatRepository.saveAll(rows);
+        } catch (DuplicateKeyException e) {
+            // Someone committed one of these seats first; undo any rows we inserted.
+            bookedSeatRepository.deleteByBookingId(booking.getId());
+            throw new SeatUnavailableException("One or more seats were just booked by someone else");
         }
     }
 

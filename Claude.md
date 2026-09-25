@@ -117,3 +117,12 @@ notification integrations (all external effects are mocked).
   seats; booking history via `GET /api/bookings?userId=`. Verified with a unit test of
   the provider (hold/conflict/release/expiry) and a hold-API integration test. The
   N-thread race test is deferred to the testing milestone.
+- **M5 — Payment mock + confirmation + seat persistence.** A `PaymentStrategy` (mocked to
+  approve) behind which `PaymentService` charges, then delegates to
+  `BookingService.confirm`. Confirmation writes one `BookedSeat` per seat first (unique
+  index = durable backstop; duplicate-key aborts and rolls the rows back since standalone
+  Mongo has no transactions), then flips the booking to CONFIRMED (compensating on
+  failure), then releases the holds. Guards: only the owner can pay (403), only a CREATED
+  booking can be confirmed (409), a lapsed hold blocks confirmation (409), declined
+  payment (402). `POST /api/bookings/{id}/payment`. Verified end to end (hold → pay →
+  CONFIRMED, one booked-seat row per seat, seats stay unavailable) plus the guard cases.
