@@ -27,6 +27,7 @@ public class ShowService {
     private final MovieRepository movieRepository;
     private final TheaterService theaterService;
     private final BookedSeatRepository bookedSeatRepository;
+    private final SeatLockProvider seatLockProvider;
 
     public Show create(CreateShowRequest request) {
         if (!movieRepository.existsById(request.movieId())) {
@@ -88,22 +89,29 @@ public class ShowService {
                 .toList();
     }
 
+    /** All seats belonging to the screen this show plays on. */
+    public List<Seat> getScreenSeats(Show show) {
+        Theater theater = theaterService.get(show.getTheaterId());
+        Screen screen = theaterService.findScreen(theater, show.getScreenId());
+        return screen.getSeats();
+    }
+
     /**
-     * Seats on the show's screen that are not yet committed to a booking. In this
-     * milestone that means the screen's seats minus persisted booked seats; held (but
-     * not yet booked) seats are subtracted once the hold layer is introduced.
+     * Seats on the show's screen that a customer can still pick: the screen's seats minus
+     * those already committed to a booking and minus those currently held by someone.
      */
     public List<Seat> getAvailableSeats(String showId) {
         Show show = get(showId);
-        Theater theater = theaterService.get(show.getTheaterId());
-        Screen screen = theaterService.findScreen(theater, show.getScreenId());
+        List<Seat> screenSeats = getScreenSeats(show);
 
         Set<String> bookedNumbers = bookedSeatRepository.findByShowId(showId).stream()
                 .map(BookedSeat::getSeatId)
                 .collect(Collectors.toSet());
+        Set<String> heldNumbers = seatLockProvider.heldSeatIds(showId);
 
-        return screen.getSeats().stream()
+        return screenSeats.stream()
                 .filter(seat -> !bookedNumbers.contains(seat.getNumber()))
+                .filter(seat -> !heldNumbers.contains(seat.getNumber()))
                 .toList();
     }
 }

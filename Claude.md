@@ -107,3 +107,13 @@ notification integrations (all external effects are mocked).
   and/or theater (`GET /api/shows?movieId=&theaterId=`). Complements the existing
   per-show available-seats and theater-layout endpoints. Verified with a browse-flow
   MockMvc test.
+- **M4 — Seat holds + locking layer.** `SeatLockProvider` — a singleton holding
+  `showId -> (seatId -> SeatLock)`: outer `ConcurrentHashMap` for atomic per-show table
+  creation, every access to a show's table inside `synchronized(table)` so hold/release/
+  validate serialize per show. Keyed by string ids, ownership by userId, lazy expiry (no
+  sweeper). `POST /api/bookings` is step one of booking: validate show/user/seats,
+  fast-fail if already booked, take an all-or-nothing hold, then persist a `CREATED`
+  booking (releasing the hold if that save fails). Availability now also subtracts held
+  seats; booking history via `GET /api/bookings?userId=`. Verified with a unit test of
+  the provider (hold/conflict/release/expiry) and a hold-API integration test. The
+  N-thread race test is deferred to the testing milestone.
