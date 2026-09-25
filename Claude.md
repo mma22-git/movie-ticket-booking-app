@@ -88,3 +88,22 @@ notification integrations (all external effects are mocked).
   `(showId, seatId)` on `booked_seats` lands here, with an integration test proving it
   rejects a duplicate seat on the same show while allowing the same seat number on
   different shows.
+- **M3a — Web/error-handling foundation.** A single `ApiError` response shape and a
+  `@RestControllerAdvice` global handler mapping not-found (404), request-body and
+  parameter validation (400), and any unmapped exception (500, logged, internals
+  hidden). Verified with a standalone MockMvc test against a throwaway controller, so no
+  real endpoint ships in this milestone. Endpoints (M3b) build on this contract.
+- **M3b — Admin/setup CRUD endpoints.** Service layer + REST endpoints under `/api` for
+  movies, theaters (add screens, add seats), shows (create, get, available seats), and
+  users — request/response DTOs only, never exposing documents. Adds a `ConflictException`
+  (409) for duplicate screens/seats and duplicate user email (the latter also caught from
+  Mongo's unique-index violation). Available seats currently = the screen's seats minus
+  persisted booked seats; held seats are subtracted once the hold layer lands (M4).
+  Verified with an end-to-end MockMvc test (create movie → theater → screen+seats → show →
+  available seats) plus validation/not-found/conflict cases.
+- **M3c — Customer browse/discovery.** The read path a customer walks before booking:
+  search movies by partial name (`GET /api/movies?name=`), find theaters screening a
+  movie (`GET /api/movies/{id}/theaters?city=`), and list showtimes filtered by movie
+  and/or theater (`GET /api/shows?movieId=&theaterId=`). Complements the existing
+  per-show available-seats and theater-layout endpoints. Verified with a browse-flow
+  MockMvc test.

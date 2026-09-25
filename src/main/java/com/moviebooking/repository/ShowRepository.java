@@ -11,4 +11,6 @@ public interface ShowRepository extends MongoRepository<Show, String> {
     List<Show> findByMovieId(String movieId);
 
     List<Show> findByTheaterId(String theaterId);
+
+    List<Show> findByMovieIdAndTheaterId(String movieId, String theaterId);
 }
