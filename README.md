@@ -8,6 +8,31 @@ The design centerpiece is **correct seat allocation under concurrency**: many us
 race for one seat, and the system lets exactly one win. See
 [Concurrency model](#concurrency-model-the-core) below.
 
+> **Reviewer's guide.** This README is meant to be read top-to-bottom as the story of the
+> project: the approach, the stack and why, the data model, the architecture and request
+> flow, the concurrency solution, then the API, testing, and assumptions. The *AI workflow*
+> used to build it is documented separately in [`Claude.md`](Claude.md).
+
+## Solution approach (high level)
+
+The problem is a classic booking system whose only genuinely hard part is **not selling
+the same seat twice under concurrent load**. Everything else (catalog, browse, payment)
+is supporting cast. So the approach was:
+
+1. **Model the domain as aggregates**, not a flat relational schema — a theater owns its
+   screens and seats; a booking owns its seats. This maps naturally to MongoDB documents.
+2. **Make booking two-step: hold → pay → confirm.** Holding reserves seats during the
+   payment window without committing them; confirmation is the single point where a seat
+   becomes permanently taken. This mirrors how real ticketing works and isolates the
+   concurrency-critical moment.
+3. **Solve the race with defense in depth** — a fast in-process lock to serialize hold
+   attempts, *plus* a database unique constraint that makes a double-booking physically
+   impossible to persist even if the lock were bypassed. Two independent guarantees.
+4. **Keep a clean layered Spring architecture** (controller → service → repository) with
+   DTOs at the edge, so the concurrency logic lives in one small, reviewable component.
+5. **Build it in phases**, each proven by tests, culminating in a concurrency test that
+   demonstrates the guarantee under a real thread race.
+
 ## Tech stack
 
 | Concern     | Choice                        | Notes                                              |
@@ -23,6 +48,77 @@ committed wrapper so anyone can build with only a JDK installed.
 **Why MongoDB:** the document model fits the aggregates here (a theater with its screens
 and seats; a booking with its seats). Correctness is designed *not* to depend on
 multi-document transactions (local Mongo runs standalone) — see the concurrency model.
+
+## Data model & relationships
+
+Six documents across six collections. Screens and seats are **embedded** inside a theater
+(they have no life of their own); everything else references by id.
+
+```
+   Movie                         User
+     │  (referenced by)            │  (referenced by)
+     ▼                             ▼
+   Show  ◄── theaterId ──  Theater            Booking
+     ▲                       │  embeds          │  embeds seatIds[]
+     │  referenced by        ▼                  │  references showId, userId
+   Booking                 Screen (1..*)        │
+     │                       │  embeds          ▼
+     ▼                       ▼               BookedSeat   ── UNIQUE (showId, seatId)
+  BookedSeat              Seat (1..*)           one row per confirmed seat
+```
+
+| Collection    | Key fields                                             | Notes                                              |
+|---------------|--------------------------------------------------------|----------------------------------------------------|
+| `movies`      | `id`, `name`, `durationMinutes`                        | Catalog entry.                                     |
+| `theaters`    | `id`, `name`, `city`, `screens[]`                      | Embeds `Screen[]`; each `Screen` embeds `Seat[]`.  |
+| `shows`       | `id`, `movieId`, `theaterId`, `screenId`, `startTime`  | A movie on one screen at a time. Refs, not embeds. |
+| `bookings`    | `id`, `showId`, `userId`, `seatIds[]`, `status`        | Status: `CREATED` → `CONFIRMED` (or expired hold). |
+| `booked_seats`| `id`, `showId`, `seatId`, `bookingId`, `userId`        | **Unique index `(showId, seatId)`** — the backstop.|
+| `users`       | `id`, `name`, `email` (unique), `role`                 | Role: `ADMIN` or `CUSTOMER`.                       |
+
+Relationships in words:
+- A **theater** has one or more **screens** (embedded); each screen has one or more
+  **seats** (embedded). Seat numbers are unique within a screen.
+- A **show** is a movie playing on one screen of a theater at a start time — it references
+  `movieId`, `theaterId`, `screenId`.
+- A **booking** belongs to a user and a show and lists the seat numbers it holds.
+- A **booked_seat** is one row per seat that has been committed to a booking; its unique
+  `(showId, seatId)` index is what physically prevents a seat being sold twice.
+
+## Architecture & request flow
+
+Standard layered Spring Boot, thin controllers, logic in services:
+
+```
+HTTP request
+   │
+   ▼
+RoleAuthorizationInterceptor   ── resolves X-User-Id → user → checks @RequiresRole (401/403)
+   │
+   ▼
+Controller (web)               ── validates request DTO, maps DTO ⇄ domain, no logic
+   │
+   ▼
+Service                        ── business logic: BookingService, PaymentService,
+   │                              ShowService…, and the SeatLockProvider (in-memory holds)
+   ▼
+Repository (Spring Data Mongo) ── generated implementations over the collections
+   │
+   ▼
+MongoDB
+
+Any exception ──► GlobalExceptionHandler (@RestControllerAdvice) ──► consistent ApiError JSON
+```
+
+The booking-critical path, step by step:
+
+1. `POST /api/bookings` → `BookingService.hold`: validate show/user/seats, fast-fail if a
+   seat is already booked, take an **all-or-nothing in-memory hold** via `SeatLockProvider`,
+   then save a `Booking` in `CREATED`. (Hold released if that save fails.)
+2. `POST /api/bookings/{id}/payment` → `PaymentService.pay`: charge via the mocked
+   `PaymentStrategy`, then `BookingService.confirm`: **write one `booked_seat` row per seat
+   first** (unique index — a duplicate here aborts and rolls back), flip the booking to
+   `CONFIRMED`, then release the holds.
 
 ## Concurrency model (the core)
 
@@ -175,14 +271,24 @@ curl -s -X POST $BASE/api/bookings/$BOOKING/payment -H "$H" -H "X-User-Id: $CUST
 ./mvnw test
 ```
 
-Tests run against a local MongoDB using a separate `moviebooking_test` database, so they
-never touch development data.
+The approach is layered, and every feature shipped with its tests (not bolted on at the
+end):
 
-The signature test is the **concurrency ("money") test**
-(`ConcurrentBookingTest`): N threads, released simultaneously, race for one seat —
-exactly one booking ends `CONFIRMED`, the rest fail cleanly, and exactly one `booked_seat`
-row is persisted. A companion test races the persistence layer directly to show the unique
-index alone prevents a double-booking even if the in-memory hold were bypassed.
+- **Unit tests** for the isolated concurrency logic — `SeatLockProviderTest` drives the
+  lock component directly (hold, conflict, release, lazy expiry) with no Spring context.
+- **Integration tests** for each API slice — `@SpringBootTest` + `MockMvc` against a real
+  local MongoDB, exercising the full controller → service → repository → DB path:
+  admin setup, browse, hold, confirm, and RBAC (401/403). They use a separate
+  `moviebooking_test` database so they never touch development data.
+- **Repository test** proving the unique index rejects a duplicate `(showId, seatId)`.
+- **The signature "money" test** — `ConcurrentBookingTest` releases N threads
+  simultaneously (a latch harness, so they truly collide) to race one seat: exactly one
+  booking ends `CONFIRMED`, the rest fail cleanly, and exactly one `booked_seat` row is
+  persisted. A companion test races the persistence layer directly to show the unique
+  index alone prevents a double-booking even if the in-memory hold were bypassed. It is
+  run repeatedly to confirm determinism, not luck.
+
+Full suite: 29 tests.
 
 ## Project structure
 

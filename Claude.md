@@ -2,8 +2,7 @@
 
 This file records the architecture decisions, conventions, and constraints I hold the
 implementation to. I own the design; AI is used heavily for implementation under that
-direction. It is updated as each milestone lands, so it stays a real record rather than
-a back-filled summary.
+direction.
 
 ## What this is
 
@@ -11,6 +10,26 @@ A backend for a movie ticket booking system: cities/theaters host shows, users h
 book seats at seat level, pay (mocked), and receive confirmation. The centerpiece is
 **correct seat allocation under concurrency** — many users may race for the same seat,
 and the system must let exactly one win.
+
+## AI workflow — how this was built
+
+The rule I worked by: *AI wrote a lot of the code, but I own every decision and understand
+every line.* Concretely:
+
+- **I own the design; AI implements under direction.** The decisions that define the
+  solution — the data model and the `(showId, seatId)` uniqueness, the concurrency
+  strategy, hold-expiry mechanism, the RBAC approach, and scope — were mine. For each, AI
+  laid out options and tradeoffs, I chose, and only then did it implement.
+- **Built in small, reviewable milestones**, each mapping to one (or a couple of) commits
+  with a readable message. Nothing was generated in one big dump; the commit log is a
+  deliberate narrative (scaffold → domain → APIs → holds → payment → concurrency tests →
+  RBAC → docs).
+- **A tight loop per milestone:** propose options → I decide → AI implements → the suite
+  runs green → I review the diff → commit. I never committed code I hadn't read.
+- **Tests shipped with each feature**, not afterwards; the concurrency test is the proof
+  the whole thing works.
+- **This file is the running record**, updated as each milestone lands — it is the
+  artifact showing how the AI was directed, not a summary written after the fact.
 
 ## Stack decisions
 
