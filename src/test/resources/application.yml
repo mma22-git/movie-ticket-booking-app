@@ -1,0 +1,7 @@
+# Test configuration. Tests run against a local MongoDB, but in a SEPARATE
+# database so they never touch development data.
+spring:
+  data:
+    mongodb:
+      uri: ${MONGODB_URI:mongodb://localhost:27017/moviebooking_test}
+      auto-index-creation: true
